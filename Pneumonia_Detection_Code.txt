@@ -1,0 +1,147 @@
+# =============================
+# STEP 1: Install Dependencies
+# =============================
+!pip install opencv-python kaggle seaborn
+
+import os
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import cv2
+import seaborn as sns
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+from sklearn.metrics import confusion_matrix, classification_report
+from sklearn.model_selection import train_test_split
+from tqdm import tqdm
+
+# =============================
+# STEP 2: Download Dataset from Kaggle
+# =============================
+# NOTE: Upload your kaggle.json file before running this
+# In Colab: Go to "Files" > Upload kaggle.json to /content/.kaggle/
+
+!mkdir -p ~/.kaggle
+!cp kaggle.json ~/.kaggle/
+!chmod 600 ~/.kaggle/kaggle.json
+
+# Chest X-ray Pneumonia dataset
+!kaggle datasets download -d paultimothymooney/chest-xray-pneumonia
+!unzip chest-xray-pneumonia.zip -d data
+
+# =============================
+# STEP 3: Preprocess Images
+# =============================
+IMG_SIZE = 128
+
+def preprocess_image(img_path):
+    img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)   # grayscale
+    img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))        # resize
+    img = img / 255.0                                  # normalize
+    return img
+
+def load_dataset(folder):
+    images, labels = [], []
+    for label in ["NORMAL", "PNEUMONIA"]:
+        path = os.path.join(folder, label)
+        for img_file in tqdm(os.listdir(path), desc=f"Loading {label}"):
+            try:
+                img = preprocess_image(os.path.join(path, img_file))
+                images.append(img)
+                labels.append(0 if label == "NORMAL" else 1)
+            except:
+                pass
+    return np.array(images), np.array(labels)
+
+train_images, train_labels = load_dataset("data/chest_xray/train")
+test_images, test_labels = load_dataset("data/chest_xray/test")
+
+# Add channel dimension for CNN
+train_images = train_images.reshape(-1, IMG_SIZE, IMG_SIZE, 1)
+test_images = test_images.reshape(-1, IMG_SIZE, IMG_SIZE, 1)
+
+# Split train into train/val
+train_images, val_images, train_labels, val_labels = train_test_split(
+    train_images, train_labels, test_size=0.2, random_state=42
+)
+
+print("Train:", train_images.shape, train_labels.shape)
+print("Validation:", val_images.shape, val_labels.shape)
+print("Test:", test_images.shape, test_labels.shape)
+
+# =============================
+# STEP 4: Build CNN Model
+# =============================
+model = Sequential([
+    Conv2D(32, (3,3), activation='relu', input_shape=(IMG_SIZE, IMG_SIZE, 1)),
+    MaxPooling2D(2,2),
+    Conv2D(64, (3,3), activation='relu'),
+    MaxPooling2D(2,2),
+    Flatten(),
+    Dense(128, activation='relu'),
+    Dropout(0.5),
+    Dense(1, activation='sigmoid')
+])
+
+model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+model.summary()
+
+# =============================
+# STEP 5: Train Model
+# =============================
+history = model.fit(
+    train_images, train_labels,
+    validation_data=(val_images, val_labels),
+    epochs=10,
+    batch_size=32
+)
+
+# =============================
+# STEP 6: Evaluate Model
+# =============================
+loss, acc = model.evaluate(test_images, test_labels)
+print(f"✅ Test Accuracy: {acc*100:.2f}%")
+
+# Predictions
+y_pred = (model.predict(test_images) > 0.5).astype("int32")
+
+# Confusion Matrix
+cm = confusion_matrix(test_labels, y_pred)
+plt.figure(figsize=(6,4))
+sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+            xticklabels=["Normal","Pneumonia"],
+            yticklabels=["Normal","Pneumonia"])
+plt.xlabel("Predicted")
+plt.ylabel("True")
+plt.show()
+
+# Classification Report
+print("\n", classification_report(test_labels, y_pred, target_names=["Normal","Pneumonia"]))
+
+# =============================
+# STEP 7: Visualize Training
+# =============================
+plt.figure(figsize=(10,5))
+plt.subplot(1,2,1)
+plt.plot(history.history['accuracy'], label="Train Acc")
+plt.plot(history.history['val_accuracy'], label="Val Acc")
+plt.legend()
+plt.title("Accuracy")
+
+plt.subplot(1,2,2)
+plt.plot(history.history['loss'], label="Train Loss")
+plt.plot(history.history['val_loss'], label="Val Loss")
+plt.legend()
+plt.title("Loss")
+
+plt.show()
+
+# =============================
+# STEP 8: Test with Random Sample
+# =============================
+idx = np.random.randint(0, test_images.shape[0])
+sample_img = test_images[idx]
+plt.imshow(sample_img.reshape(IMG_SIZE, IMG_SIZE), cmap="gray")
+plt.title("Prediction: " + ("Pneumonia" if y_pred[idx] else "Normal"))
+plt.show()
